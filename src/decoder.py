@@ -70,3 +70,88 @@ def choose_function_name(
         input_ids.append(token)
         written += token_texts[token]
     return written[:-1]
+
+NUMBER_CHARS = set("0123456789.-")
+MAX_NUMBER_LENGTH = 24
+
+
+def is_number_prefix(text: str) -> bool:
+    """Check that a text can be the beginning of a number.
+
+    Args:
+        text: The text written so far.
+
+    Returns:
+        True if more characters could turn it into a valid number.
+    """
+    # Only digits, '.' and '-' are allowed
+    if not set(text) <= NUMBER_CHARS:
+        return False
+    # '-' is only allowed as the first character
+    if "-" in text[1:]:
+        return False
+    # At most one '.'
+    return text.count(".") <= 1
+
+
+def is_complete_number(text: str) -> bool:
+    """Check that a text is a complete number, e.g. "42", "-3.5".
+
+    Args:
+        text: The text written so far.
+
+    Returns:
+        True if the text is a valid number that ends with a digit.
+    """
+    return is_number_prefix(text) and text[-1:].isdigit()
+
+
+def generate_number(
+    model: Small_LLM_Model,
+    token_texts: list[str],
+    input_ids: list[int],
+    end: str,
+) -> float:
+    """Let the model write a number, followed by the given end text.
+
+    Args:
+        model: The language model.
+        token_texts: The real text of every token.
+        input_ids: The tokens so far; the chosen tokens are appended.
+        end: The text that closes the number: "," or "}".
+
+    Returns:
+        The number written by the model, as a float.
+
+    Raises:
+        ValueError: If no valid token can be chosen.
+    """
+    # The part of the number written so far (empty at the start)
+    written = ""
+
+    while True:
+        allowed = []
+        for token_id, text in enumerate(token_texts):
+            # The end token is allowed once the number is complete
+            if text == end and is_complete_number(written):
+                allowed.append(token_id)
+            # Otherwise the token must keep the text a valid number
+            elif (
+                text
+                and len(written + text) <= MAX_NUMBER_LENGTH
+                and is_number_prefix(written + text)
+            ):
+                allowed.append(token_id)
+
+        if not allowed:
+            raise ValueError(f"Cannot continue the number {written!r}")
+
+        # Same as for the name: ask the model, choose the best allowed token
+        logits = model.get_logits_from_input_ids(input_ids)
+        token = pick_best(logits, allowed)
+        input_ids.append(token)
+
+        # If the model chose the end token, the number is finished
+        if token_texts[token] == end:
+            return float(written)
+        written += token_texts[token]
