@@ -2,6 +2,7 @@
 
 from src.models import FunctionDefinition
 
+
 def describe_function(fn: FunctionDefinition) -> str:
     """Describe one function on a single line.
 
@@ -15,6 +16,7 @@ def describe_function(fn: FunctionDefinition) -> str:
         f"{name}: {spec.type}" for name, spec in fn.parameters.items()
     )
     return f"- {fn.name}({params}): {fn.description}"
+
 
 def build_prompt(functions: list[FunctionDefinition], request: str) -> str:
     """Build the prompt that asks the LLM to choose a function call.

@@ -26,6 +26,7 @@ def bytes_to_unicode() -> dict[int, str]:
             shift += 1
     return table
 
+
 def load_token_texts(path: str) -> list[str]:
     """Load the vocabulary file and return the real text of every token.
 

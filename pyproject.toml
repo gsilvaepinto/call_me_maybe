@@ -21,5 +21,15 @@ members = [
 [tool.uv.sources]
 llm-sdk = { workspace = true }
 
+[dependency-groups]
+dev = [
+    "flake8>=7.5.0",
+    "mypy>=2.4.1",
+]
+
 [tool.uv]
 package = false
+
+[tool.mypy]
+exclude = ["^\\.venv/", "^llm_sdk/", "^explore/"]
+namespace_packages = false

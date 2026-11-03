@@ -10,7 +10,7 @@ from src.prompt import build_prompt
 
 NUMBER_CHARS = set("0123456789.-")
 MAX_NUMBER_LENGTH = 24
-MAX_STRING_LENGTH = 200
+MAX_STRING_TOKENS = 100
 
 
 def pick_best(logits: list[float], allowed: list[int]) -> int:
@@ -192,7 +192,9 @@ def generate_string(
 ) -> str:
     """Let the model write the content of a string, up to its closing quote.
 
-    The opening quote must already be in input_ids.
+    The opening quote must already be in input_ids. Any token that
+    contains a quote closes the string; only the part before the quote
+    belongs to the value.
 
     Args:
         model: The language model.
@@ -202,36 +204,31 @@ def generate_string(
     Returns:
         The text written by the model, without the quotes.
     """
-    # Allowed tokens never change for a string, so compute them once:
-    # any token without a quote, a newline or a backslash,
-    # plus the closing quote itself
+    # Allowed tokens never change for a string, so compute them once.
+    # Only the part before the first quote matters: it must not contain
+    # a newline or a backslash, e.g. 'hello', '"', '",' and '!"' are ok
     allowed = []
     for token_id, text in enumerate(token_texts):
-        if text == '"':
-            allowed.append(token_id)
-        elif (
-            text
-            and '"' not in text
-            and "\n" not in text
-            and "\\" not in text
-        ):
+        before_quote = text.split('"', 1)[0]
+        if text and "\n" not in before_quote and "\\" not in before_quote:
             allowed.append(token_id)
 
-    # The text written so far (empty at the start)
-    written = ""
+    # The tokens of the string written so far
+    content_ids: list[int] = []
 
-    while len(written) < MAX_STRING_LENGTH:
+    while len(content_ids) < MAX_STRING_TOKENS:
         logits = model.get_logits_from_input_ids(input_ids)
         token = pick_best(logits, allowed)
         input_ids.append(token)
 
-        # If the model chose the closing quote, the string is finished
-        if token_texts[token] == '"':
-            return written
-        written += token_texts[token]
+        # A token with a quote closes the string: keep what comes before it
+        text = token_texts[token]
+        if '"' in text:
+            return model.decode(content_ids) + text.split('"', 1)[0]
+        content_ids.append(token)
 
     # Too long: stop here
-    return written
+    return model.decode(content_ids)
 
 
 def add_text(

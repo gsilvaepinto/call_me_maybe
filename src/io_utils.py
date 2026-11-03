@@ -34,6 +34,7 @@ def read_json_list(path: str) -> list[Any]:
         raise ValueError(f"{path} must contain a JSON list")
     return data
 
+
 def load_functions(path: str) -> list[FunctionDefinition]:
     """Load and validate the function definitions file.
 
@@ -51,6 +52,7 @@ def load_functions(path: str) -> list[FunctionDefinition]:
         return [FunctionDefinition.model_validate(item) for item in data]
     except ValidationError as e:
         raise ValueError(f"Invalid function definition in {path}:\n{e}")
+
 
 def load_prompts(path: str) -> list[PromptItem]:
     """Load and validate the prompts file.
