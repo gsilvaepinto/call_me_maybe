@@ -1,7 +1,17 @@
 """Constrained decoding: make the LLM write only valid function calls."""
 
+from typing import Any
+
 import numpy as np
 from llm_sdk import Small_LLM_Model
+
+from src.models import FunctionCall, FunctionDefinition
+from src.prompt import build_prompt
+
+NUMBER_CHARS = set("0123456789.-")
+MAX_NUMBER_LENGTH = 24
+MAX_STRING_LENGTH = 200
+
 
 def pick_best(logits: list[float], allowed: list[int]) -> int:
     """Return the allowed token with the highest score.
@@ -16,63 +26,79 @@ def pick_best(logits: list[float], allowed: list[int]) -> int:
     Returns:
         The id of the chosen token.
     """
-    # Start with every token forbidden: [-inf, -inf, -inf, -inf, ...]
+    # Convert the scores to a numpy array, e.g. [9.0, 7.5, 3.0, 6.0, ...]
     scores = np.array(logits, dtype=np.float64)
-    
+
     # Start with every token forbidden: [-inf, -inf, -inf, -inf, ...]
     masked = np.full(len(scores), -np.inf)
 
     # Put back the real score of the allowed tokens only,
     # e.g. allowed = [1, 3] -> [-inf, 7.5, -inf, 6.0, ...]
     masked[allowed] = scores[allowed]
+
+    # The best score can only belong to an allowed token, e.g. 1
     return int(np.argmax(masked))
 
 
 def choose_function_name(
-        model: Small_LLM_Model,
-        token_texts: list[str],
-        input_ids: list[str],
-        names: list[str]
+    model: Small_LLM_Model,
+    token_texts: list[str],
+    input_ids: list[int],
+    names: list[str],
 ) -> str:
-    """Let the model write the name of one of the given functions.
+    """Let the model write one of the given names.
 
     The text written so far is always the beginning of a valid name
     followed by a closing quote. Generation stops when a full name and
-    its closing quote have been written.
+    its closing quote have been written. Works for any list of words,
+    e.g. function names or ["true", "false"].
 
     Args:
         model: The language model.
         token_texts: The real text of every token.
-        input_ids: The tokens of the prompt; the chosen tokens are
-            appended to this list.
-        names: The names of the available functions.
+        input_ids: The tokens so far; the chosen tokens are appended.
+        names: The names to choose from.
 
     Returns:
-        The chosen function name.
+        The chosen name.
     """
     # Add a closing quote to every name, so we know when a name is finished,
     # e.g. ['fn_add_numbers"', 'fn_greet"', 'fn_reverse_string"']
     targets = [name + '"' for name in names]
 
+    # The part of the name written so far (empty at the start)
     written = ""
-     # Repeat until a full name with its closing quote has been written
+
+    # Repeat until a full name with its closing quote has been written
     while written not in targets:
+
         # Keep the ids of the tokens that are not empty and that keep
         # (written + token text) at the beginning of a valid name,
         # e.g. after "fn_": "add", "gre", "greet", "re", "a", ...
-        allowed = [
-            token_id
-            for token_id, text in enumerate(token_texts)
-            if text and any(t.startswith(written + text) for t in targets)
-        ]
-        logits = model.get_logits_from_input_ids(input_ids)
-        token = pick_best(logits, allowed)
-        input_ids.append(token)
-        written += token_texts[token]
-    return written[:-1]
+        allowed = []
+        for token_id, text in enumerate(token_texts):
+            if text == "":
+                continue
+            attempt = written + text
+            for target in targets:
+                if target.startswith(attempt):
+                    allowed.append(token_id)
+                    break
 
-NUMBER_CHARS = set("0123456789.-")
-MAX_NUMBER_LENGTH = 24
+        # Ask the model for the score of every possible next token
+        logits = model.get_logits_from_input_ids(input_ids)
+
+        # Choose the best token among the allowed ones, e.g. "greet"
+        token = pick_best(logits, allowed)
+
+        # Add the token to the conversation, so the model sees it next time
+        input_ids.append(token)
+
+        # Add the token's text to the name, e.g. "fn_" + "greet"
+        written += token_texts[token]
+
+    # written is now e.g. 'fn_greet"'; remove the closing quote
+    return written[:-1]
 
 
 def is_number_prefix(text: str) -> bool:
@@ -95,7 +121,7 @@ def is_number_prefix(text: str) -> bool:
 
 
 def is_complete_number(text: str) -> bool:
-    """Check that a text is a complete number, e.g. "42", "-3.5".
+    """Check that a text is a complete number, e.g. "42" or "-3.5".
 
     Args:
         text: The text written so far.
@@ -155,3 +181,151 @@ def generate_number(
         if token_texts[token] == end:
             return float(written)
         written += token_texts[token]
+
+
+def generate_string(
+    model: Small_LLM_Model,
+    token_texts: list[str],
+    input_ids: list[int],
+) -> str:
+    """Let the model write the content of a string, up to its closing quote.
+
+    The opening quote must already be in input_ids.
+
+    Args:
+        model: The language model.
+        token_texts: The real text of every token.
+        input_ids: The tokens so far; the chosen tokens are appended.
+
+    Returns:
+        The text written by the model, without the quotes.
+    """
+    # Allowed tokens never change for a string, so compute them once:
+    # any token without a quote, a newline or a backslash,
+    # plus the closing quote itself
+    allowed = []
+    for token_id, text in enumerate(token_texts):
+        if text == '"':
+            allowed.append(token_id)
+        elif (
+            text
+            and '"' not in text
+            and "\n" not in text
+            and "\\" not in text
+        ):
+            allowed.append(token_id)
+
+    # The text written so far (empty at the start)
+    written = ""
+
+    while len(written) < MAX_STRING_LENGTH:
+        logits = model.get_logits_from_input_ids(input_ids)
+        token = pick_best(logits, allowed)
+        input_ids.append(token)
+
+        # If the model chose the closing quote, the string is finished
+        if token_texts[token] == '"':
+            return written
+        written += token_texts[token]
+
+    # Too long: stop here
+    return written
+
+
+def add_text(
+    model: Small_LLM_Model,
+    input_ids: list[int],
+    text: str,
+) -> None:
+    """Append a fixed text to the conversation, without asking the model.
+
+    Args:
+        model: The language model (used only to encode the text).
+        input_ids: The tokens so far; the new tokens are appended.
+        text: The text to add, e.g. ', "parameters": {'.
+    """
+    input_ids.extend(model.encode(text)[0].tolist())
+
+
+def generate_value(
+    model: Small_LLM_Model,
+    token_texts: list[str],
+    input_ids: list[int],
+    value_type: str,
+    end: str,
+) -> Any:
+    """Let the model write one parameter value of the given type.
+
+    After this function, the end text ("," or "}") is always written.
+
+    Args:
+        model: The language model.
+        token_texts: The real text of every token.
+        input_ids: The tokens so far; the chosen tokens are appended.
+        value_type: The type from the function definition, e.g. "number".
+        end: The text that follows the value: "," or "}".
+
+    Returns:
+        The value, converted to the right Python type.
+    """
+    # Numbers: generate_number already writes the end text itself
+    if value_type in ("number", "float"):
+        return generate_number(model, token_texts, input_ids, end)
+    if value_type == "integer":
+        return int(generate_number(model, token_texts, input_ids, end))
+
+    # Booleans: let the model choose between the two words
+    if value_type == "boolean":
+        add_text(model, input_ids, '"')
+        word = choose_function_name(
+            model, token_texts, input_ids, ["true", "false"]
+        )
+        add_text(model, input_ids, end)
+        return word == "true"
+
+    # Strings, and any unknown type, are written as text
+    add_text(model, input_ids, '"')
+    text = generate_string(model, token_texts, input_ids)
+    add_text(model, input_ids, end)
+    return text
+
+
+def generate_call(
+    model: Small_LLM_Model,
+    token_texts: list[str],
+    functions: list[FunctionDefinition],
+    request: str,
+) -> FunctionCall:
+    """Translate one request into a function call.
+
+    Args:
+        model: The language model.
+        token_texts: The real text of every token.
+        functions: The functions the model can choose from.
+        request: The natural-language request.
+
+    Returns:
+        The chosen function and its arguments.
+    """
+    # 1. The prompt, followed by the beginning of the answer
+    prompt = build_prompt(functions, request) + '{"name": "'
+    input_ids = model.encode(prompt)[0].tolist()
+
+    # 2. The model chooses the function name
+    names = [fn.name for fn in functions]
+    name = choose_function_name(model, token_texts, input_ids, names)
+    function = next(fn for fn in functions if fn.name == name)
+
+    # 3. The model writes each parameter, in the order of the definition
+    add_text(model, input_ids, ', "parameters": {')
+    parameters: dict[str, Any] = {}
+    items = list(function.parameters.items())
+    for index, (param_name, spec) in enumerate(items):
+        # The last parameter is followed by "}", the others by ","
+        end = "}" if index == len(items) - 1 else ","
+        add_text(model, input_ids, f' "{param_name}": ')
+        parameters[param_name] = generate_value(
+            model, token_texts, input_ids, spec.type, end
+        )
+
+    return FunctionCall(prompt=request, name=name, parameters=parameters)

@@ -3,8 +3,12 @@
 import argparse
 import sys
 
+from llm_sdk import Small_LLM_Model
+
+from src.decoder import generate_call
 from src.io_utils import load_functions, load_prompts, save_results
 from src.models import FunctionCall
+from src.vocab import load_token_texts
 
 
 def parse_args() -> argparse.Namespace:
@@ -19,7 +23,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--functions_definition",
         default="data/input/functions_definition.json",
-        help="Path to the function definition file.",
+        help="Path to the function definitions file.",
     )
     parser.add_argument(
         "--input",
@@ -50,13 +54,29 @@ def main() -> int:
         return 1
 
     if not functions:
-        print("Error: no functions are definied.", file=sys.stderr)
+        print("Error: no functions are defined.", file=sys.stderr)
         return 1
 
     print(f"Loaded {len(functions)} functions and {len(prompts)} prompts.")
-    results: list[FunctionCall] = []
 
-    # TODO (day 3): ask the LLM to translate each prompt
+    # Load the model and the text of every token
+    try:
+        model = Small_LLM_Model()
+        token_texts = load_token_texts(model.get_path_to_vocab_file())
+    except Exception as e:
+        print(f"Error: cannot load the model: {e}", file=sys.stderr)
+        return 1
+
+    # Translate each prompt; a failing prompt is reported and skipped
+    results: list[FunctionCall] = []
+    for item in prompts:
+        try:
+            call = generate_call(model, token_texts, functions, item.prompt)
+        except Exception as e:
+            print(f"Error on prompt {item.prompt!r}: {e}", file=sys.stderr)
+            continue
+        results.append(call)
+        print(f"{item.prompt!r} -> {call.name}({call.parameters})")
 
     try:
         save_results(args.output, results)
