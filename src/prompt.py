@@ -31,6 +31,8 @@ def build_prompt(functions: list[FunctionDefinition], request: str) -> str:
         "functions below.",
         "Choose the function that matches the request and take its "
         "arguments from the request.",
+        "Copy every value exactly as written in the request, in the "
+        "same order, keeping signs such as '-' and decimals.",
         "",
         "Functions:",
     ]

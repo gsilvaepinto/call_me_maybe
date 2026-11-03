@@ -158,14 +158,16 @@ def generate_number(
     while True:
         allowed = []
         for token_id, text in enumerate(token_texts):
+            candidate = written + text
             # The end token is allowed once the number is complete
-            if text == end and is_complete_number(written):
+            if text == end and is_complete_number(written.removeprefix(" ")):
                 allowed.append(token_id)
-            # Otherwise the token must keep the text a valid number
+            # Otherwise the token must keep the text a valid number,
+            # optionally preceded by one space (e.g. " -7")
             elif (
                 text
-                and len(written + text) <= MAX_NUMBER_LENGTH
-                and is_number_prefix(written + text)
+                and len(candidate) <= MAX_NUMBER_LENGTH
+                and is_number_prefix(candidate.removeprefix(" "))
             ):
                 allowed.append(token_id)
 
@@ -284,9 +286,9 @@ def generate_value(
         return word == "true"
 
     # Strings, and any unknown type, are written as text
-    add_text(model, input_ids, '"')
+    add_text(model, input_ids, ' "')
     text = generate_string(model, token_texts, input_ids)
-    add_text(model, input_ids, end)
+    add_text(model, input_ids, ' "')
     return text
 
 
@@ -323,7 +325,7 @@ def generate_call(
     for index, (param_name, spec) in enumerate(items):
         # The last parameter is followed by "}", the others by ","
         end = "}" if index == len(items) - 1 else ","
-        add_text(model, input_ids, f' "{param_name}": ')
+        add_text(model, input_ids, f' "{param_name}":')
         parameters[param_name] = generate_value(
             model, token_texts, input_ids, spec.type, end
         )
