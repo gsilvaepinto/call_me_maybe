@@ -1,0 +1,12 @@
+[
+  {"name": "fn_add_numbers", "description": "Add two numbers together and return their sum.",
+   "parameters": {"a": {"type": "number"}, "b": {"type": "number"}}, "returns": {"type": "number"}},
+  {"name": "fn_multiply", "description": "Multiply two numbers.",
+   "parameters": {"x": {"type": "number"}, "y": {"type": "number"}}, "returns": {"type": "number"}},
+  {"name": "fn_greet", "description": "Generate a greeting message for a person by name.",
+   "parameters": {"name": {"type": "string"}}, "returns": {"type": "string"}},
+  {"name": "fn_repeat", "description": "Repeat a text a given number of times.",
+   "parameters": {"text": {"type": "string"}, "times": {"type": "integer"}}, "returns": {"type": "string"}},
+  {"name": "fn_set_light", "description": "Turn the light in a room on or off.",
+   "parameters": {"room": {"type": "string"}, "on": {"type": "boolean"}}, "returns": {"type": "string"}}
+]
